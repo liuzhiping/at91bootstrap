@@ -28,14 +28,12 @@
 #ifndef __NAND_H__
 #define __NAND_H__
 
-#define MAX_ECC_BYTES		48 /* maximum bytes of ecc */
+#define MAX_ECC_BYTES		512 /* maximum bytes of ecc */
 
 struct nand_ooblayout {
-	unsigned char	badblockpos;
-	unsigned char	eccbytes;
-	unsigned char	eccpos[MAX_ECC_BYTES];
-	unsigned char	oobavailbytes;
-	unsigned char	oobavail_offset;
+	unsigned short	badblockpos;
+	unsigned short	eccbytes;
+	unsigned short	eccpos[MAX_ECC_BYTES];
 };
 
 struct nand_chip {
@@ -43,7 +41,7 @@ struct nand_chip {
 	unsigned short	numblocks;
 	unsigned int	blocksize;
 	unsigned short	pagesize;
-	unsigned char	oobsize;
+	unsigned short	oobsize;
 	unsigned char	buswidth;
 };
 
@@ -58,6 +56,9 @@ struct nand_info {
 	unsigned int	pages_block;	/* number of pages in block */
 
 	unsigned int	buswidth;	/* data bus width (8/16 bits) */
+
+	void (*command)(unsigned char cmd);
+	void (*address)(unsigned char addr);
 
 	struct nand_ooblayout	*ecclayout;
 };

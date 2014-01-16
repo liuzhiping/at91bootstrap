@@ -12,7 +12,7 @@ COBJS-y				+= $(DRIVERS_SRC)/at91_pio.o
 COBJS-y				+= $(DRIVERS_SRC)/pmc.o
 COBJS-y				+= $(DRIVERS_SRC)/at91_pit.o
 COBJS-y				+= $(DRIVERS_SRC)/at91_wdt.o
-COBJS-y				+= $(DRIVERS_SRC)/dbgu.o
+COBJS-y				+= $(DRIVERS_SRC)/at91_usart.o
 
 COBJS-$(CONFIG_USER_HW_INIT)	+= $(DRIVERS_SRC)/hw_init_hook.o
 
@@ -25,11 +25,8 @@ COBJS-$(CONFIG_SDCARD)		+= $(DRIVERS_SRC)/at91_mci.o
 COBJS-$(CONFIG_SDCARD)		+= $(DRIVERS_SRC)/mci_media.o
 COBJS-$(CONFIG_SDCARD)		+= $(DRIVERS_SRC)/sdcard.o
 
-ifeq ($(CONFIG_BOARD), "at91sam9260ek")
-COBJS-$(CONFIG_NANDFLASH)	+= $(DRIVERS_SRC)/nandflash_9260.o
-else
 COBJS-$(CONFIG_NANDFLASH)	+= $(DRIVERS_SRC)/nandflash.o
-endif
+COBJS-$(CONFIG_USE_PMECC)	+= $(DRIVERS_SRC)/pmecc.o
 COBJS-$(CONFIG_ENABLE_SW_ECC) 	+= $(DRIVERS_SRC)/hamming.o
 
 COBJS-$(CONFIG_DATAFLASH)	+= $(DRIVERS_SRC)/at91_spi.o

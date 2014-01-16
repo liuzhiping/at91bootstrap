@@ -18,8 +18,9 @@ endif
 BINDIR:=$(TOPDIR)/binaries
 
 DATE := $(shell date)
-VERSION := 3.5.3
+VERSION := 3.6.0
 REVISION :=
+SCMINFO := $(shell ($(TOPDIR)/host-utilities/setlocalversion $(TOPDIR)))
 
 noconfig_targets:= menuconfig defconfig $(CONFIG) oldconfig
 
@@ -84,9 +85,7 @@ defconfig: $(CONFIG)/conf
 
 else #  Have DOT Config
 
-ifeq ($(CROSS_COMPILE),)
-$(error Environment variable "CROSS_COMPILE" must be defined!)
-endif
+HOSTARCH := $(shell uname -m | sed -e s/arm.*/arm/)
 
 AS=$(CROSS_COMPILE)gcc
 CC=$(CROSS_COMPILE)gcc
@@ -101,16 +100,13 @@ IMG_ADDRESS := $(strip $(subst ",,$(CONFIG_IMG_ADDRESS)))
 IMG_SIZE := $(strip $(subst ",,$(CONFIG_IMG_SIZE)))
 JUMP_ADDR := $(strip $(subst ",,$(CONFIG_JUMP_ADDR)))
 OF_OFFSET := $(strip $(subst ",,$(CONFIG_OF_OFFSET)))
-OF_LENGTH := $(strip $(subst ",,$(CONFIG_OF_LENGTH)))
-OF_FILENAME := $(strip $(subst ",,$(CONFIG_OF_FILENAME)))
 OF_ADDRESS := $(strip $(subst ",,$(CONFIG_OF_ADDRESS)))
 BOOTSTRAP_MAXSIZE := $(strip $(subst ",,$(CONFIG_BOOTSTRAP_MAXSIZE)))
 MEMORY := $(strip $(subst ",,$(CONFIG_MEMORY)))
 IMAGE_NAME:= $(strip $(subst ",,$(CONFIG_IMAGE_NAME)))
 CARD_SUFFIX := $(strip $(subst ",,$(CONFIG_CARD_SUFFIX)))
-OS_MEM_BANK := $(strip $(subst ",,$(CONFIG_OS_MEM_BANK)))
-OS_MEM_SIZE := $(strip $(subst ",,$(CONFIG_OS_MEM_SIZE)))
-OS_IMAGE_NAME := $(strip $(subst ",,$(CONFIG_OS_IMAGE_NAME)))
+MEM_BANK := $(strip $(subst ",,$(CONFIG_MEM_BANK)))
+MEM_SIZE := $(strip $(subst ",,$(CONFIG_MEM_SIZE)))
 LINUX_KERNEL_ARG_STRING := $(strip $(subst ",,$(CONFIG_LINUX_KERNEL_ARG_STRING)))
 
 # Board definitions
@@ -143,9 +139,33 @@ else
 BLOB:=
 endif
 
+ifeq ($(CONFIG_LOAD_LINUX), y)
+TARGET_NAME:=linux-$(subst I,i,$(IMAGE_NAME))
+endif
+
+ifeq ($(CONFIG_LOAD_ANDROID), y)
+TARGET_NAME:=android-$(subst I,i,$(IMAGE_NAME))
+endif
+
+ifeq ($(CONFIG_LOAD_UBOOT), y)
+TARGET_NAME:=$(subst -,,$(basename $(IMAGE_NAME)))
+endif
+
+ifeq ($(CONFIG_LOAD_64KB), y)
+TARGET_NAME:=$(basename $(IMAGE_NAME))
+endif
+
+ifeq ($(CONFIG_LOAD_1MB), y)
+TARGET_NAME:=$(basename $(IMAGE_NAME))
+endif
+
+ifeq ($(CONFIG_LOAD_4MB), y)
+TARGET_NAME:=$(basename $(IMAGE_NAME))
+endif
+
 obj=build/$(BOARDNAME)/
 
-BOOT_NAME=$(BOARDNAME)-$(PROJECT)$(CARD_SUFFIX)boot-$(IMAGE_NAME)$(BLOB)-$(VERSION)$(REV)
+BOOT_NAME=$(BOARDNAME)-$(PROJECT)$(CARD_SUFFIX)boot-$(TARGET_NAME)$(BLOB)-$(VERSION)$(REV)
 AT91BOOTSTRAP:=$(BINDIR)/$(BOOT_NAME).bin
 
 ifeq ($(IMAGE),)
@@ -174,7 +194,7 @@ GC_SECTIONS=--gc-sections
 CPPFLAGS=-ffunction-sections -g -Os -Wall \
 	-fno-stack-protector \
 	-I$(INCL) -Iinclude -Ifs/include \
-	-DAT91BOOTSTRAP_VERSION=\"$(VERSION)$(REV)\" -DCOMPILE_TIME="\"$(DATE)\""
+	-DAT91BOOTSTRAP_VERSION=\"$(VERSION)$(REV)$(SCMINFO)\" -DCOMPILE_TIME="\"$(DATE)\""
 
 ASFLAGS=-g -Os -Wall -I$(INCL) -Iinclude
 
@@ -209,7 +229,15 @@ TARGETS=$(obj) $(AT91BOOTSTRAP)
 
 PHONY:=all
 
-all: PrintFlags $(AT91BOOTSTRAP) ChkFileSize
+all: CheckCrossCompile PrintFlags $(AT91BOOTSTRAP) ChkFileSize
+
+CheckCrossCompile:
+	@( if [ "$(HOSTARCH)" != "arm" ]; then \
+		if [ "x$(CROSS_COMPILE)" == "x" ]; then \
+			echo "error: Environment variable "CROSS_COMPILE" must be defined!"; \
+			exit 2; \
+		fi \
+	fi )
 
 PrintFlags:
 	@echo CC
@@ -240,6 +268,11 @@ $(AT91BOOTSTRAP): $(OBJS)
 	@echo "  AS        "$<
 	@$(AS) $(ASFLAGS)  -c -o $@  $<
 
+
+$(AT91BOOTSTRAP).fixboot: $(AT91BOOTSTRAP)
+	./scripts/fixboot.py $(AT91BOOTSTRAP)
+
+boot: $(AT91BOOTSTRAP).fixboot
 
 PHONY+= boot bootstrap
 

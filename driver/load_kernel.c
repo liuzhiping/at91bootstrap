@@ -39,16 +39,18 @@
 #include "debug.h"
 
 #ifdef CONFIG_LOAD_ANDROID
-#ifdef CONFIG_AT91SAMA5D3XEK
+#ifdef CONFIG_SAMA5D3XEK
 #ifdef CONFIG_NANDFLASH
 static char *cmd_line_android_pda = "console=ttyS0,115200 " \
-		"mtdparts=atmel_nand:5M(Bootstrap),125M(system),-(userdata) " \
+		"mtdparts=atmel_nand:8M(bootstrap/kernel),125M(system)," \
+		"-(userdata) " \
 		"ubi.mtd=1 ubi.mtd=2 rw root=ubi0:system rootfstype=ubifs "\
 		"init=/init "\
 		"androidboot.hardware=sama5d3x-pda androidboot.console=ttyS0";
 
 static char *cmd_line_android = "console=ttyS0,115200 " \
-		"mtdparts=atmel_nand:5M(Bootstrap),125M(system),-(userdata) " \
+		"mtdparts=atmel_nand:8M(bootstrap/kernel),125M(system)," \
+		"-(userdata) " \
 		"ubi.mtd=1 ubi.mtd=2 rw root=ubi0:system rootfstype=ubifs " \
 		"init=/init " \
 		"androidboot.hardware=sama5d3x-ek androidboot.console=ttyS0";
@@ -62,7 +64,7 @@ static char *cmd_line_android = "console=ttyS0,115200 " \
 		"root=/dev/mmcblk0p2 rw rootwait init=/init " \
 		"androidboot.hardware=sama5d3x-ek androidboot.console=ttyS0";
 #endif
-#endif /* #ifdef CONFIG_AT91SAMA5D3XEK */
+#endif /* #ifdef CONFIG_SAMA5D3XEK */
 #endif /* #ifdef CONFIG_LOAD_ANDROID */
 
 #ifdef CONFIG_OF_LIBFDT
@@ -71,19 +73,19 @@ static int setup_dt_blob(void *blob)
 {
 	char *bootargs = LINUX_KERNEL_ARG_STRING;
 	char *p;
-	unsigned int mem_bank = OS_MEM_BANK;
-	unsigned int mem_size = OS_MEM_SIZE;
+	unsigned int mem_bank = MEM_BANK;
+	unsigned int mem_size = MEM_SIZE;
 	int ret;
 
 	if (check_dt_blob_valid(blob)) {
-		dbg_log(1, "DT: the blob is not a valid fdt\n\r");
+		dbg_info("DT: the blob is not a valid fdt\n");
 		return -1;
 	}
 
-	dbg_log(1, "\n\rUsing device tree in place at %d\n\r",
+	dbg_info("\nUsing device tree in place at %d\n",
 						(unsigned int)blob);
 
-#if defined(CONFIG_LOAD_ANDROID) && defined(CONFIG_AT91SAMA5D3XEK)
+#if defined(CONFIG_LOAD_ANDROID) && defined(CONFIG_SAMA5D3XEK)
 	if (get_dm_sn() == BOARD_ID_PDA_DM)
 		bootargs = cmd_line_android_pda;
 	else
@@ -189,7 +191,7 @@ static void setup_commandline_tag(struct tag_cmdline *params,
 
 static void setup_boot_params(void)
 {
-	unsigned int *params = (unsigned int *)(OS_MEM_BANK + 0x100);
+	unsigned int *params = (unsigned int *)(MEM_BANK + 0x100);
 
 	struct tag_core *coreparam = (struct tag_core *)params;
 	coreparam->header.tag = TAG_FLAG_CORE;
@@ -205,8 +207,8 @@ static void setup_boot_params(void)
 	memparam->header.tag = TAG_FLAG_MEM;
 	memparam->header.size = TAG_SIZE_MEM32;
 
-	memparam->start = OS_MEM_BANK;
-	memparam->size = OS_MEM_SIZE;
+	memparam->start = MEM_BANK;
+	memparam->size = MEM_SIZE;
 
 	params = (unsigned int *)params + TAG_SIZE_MEM32;
 
@@ -239,10 +241,11 @@ static void setup_boot_params(void)
 }
 #endif /* #ifdef CONFIG_OF_LIBFDT */
 
-/* Kernel Image Header */
-#define KERNEL_IMAGE_MAGIC	0x27051956
+#if defined(CONFIG_LINUX_UIMAGE)
+/* Linux uImage Header */
+#define LINUX_UIMAGE_MAGIC	0x27051956
 
-struct kernel_image_header {
+struct linux_uimage_header {
 	unsigned int	magic;
 	unsigned int	header_crc;
 	unsigned int	time;
@@ -257,63 +260,137 @@ struct kernel_image_header {
 	unsigned char	name[32];
 };
 
+static int boot_uimage_setup(unsigned char *addr, unsigned int *entry)
+{
+	struct linux_uimage_header *image_header
+			= (struct linux_uimage_header *)addr;
+	unsigned int src, dest;
+	unsigned int size;
+	unsigned int magic;
+
+	dbg_info("\nBooting uImage ......\n");
+	magic = swap_uint32(image_header->magic);
+	dbg_info("uImage magic: %d is found\n", magic);
+	if (magic != LINUX_UIMAGE_MAGIC) {
+		dbg_info("** Bad uImage magic found: %d\n", magic);
+		return -1;
+	}
+
+	if (image_header->comp_type != 0) {
+		dbg_info("The uImage compress type not supported\n");
+		return -1;
+	}
+
+	size = swap_uint32(image_header->size);
+	dest = swap_uint32(image_header->load);
+	src = (unsigned int)addr + sizeof(struct linux_uimage_header);
+
+	dbg_info("Relocating kernel image, dest: %d, src: %d\n", dest, src);
+
+	memcpy((void *)dest, (void *)src, size);
+
+	dbg_info(" ...... %d bytes data transferred\n", size);
+
+	*entry = swap_uint32(image_header->entry_point);
+
+	return 0;
+}
+
+unsigned int kernel_size(unsigned char *addr)
+{
+	struct linux_uimage_header *image_header
+		= (struct linux_uimage_header *)addr;
+
+	return swap_uint32(image_header->size)
+			+ sizeof(struct linux_uimage_header);
+}
+
+#elif defined(CONFIG_LINUX_ZIMAGE)
+
+#define	LINUX_ZIMAGE_MAGIC	0x016f2818
+
+struct linux_zimage_header {
+	unsigned int	code[9];
+	unsigned int	magic;
+	unsigned int	start;
+	unsigned int	end;
+};
+
+static int boot_zimage_setup(unsigned char *addr, unsigned int *entry)
+{
+	struct linux_zimage_header *image_header
+			= (struct linux_zimage_header *)addr;
+
+	dbg_info("\nBooting zImage ......\n");
+	dbg_info("zImage magic: %d is found\n", image_header->magic);
+	if (image_header->magic != LINUX_ZIMAGE_MAGIC) {
+		dbg_info("** Bad zImage magic found: %d\n",
+					image_header->magic);
+		return -1;
+	}
+
+	*entry = ((unsigned int)addr + image_header->start);
+
+	return 0;
+}
+
+unsigned int kernel_size(unsigned char *addr)
+{
+	struct linux_zimage_header *image_header
+		= (struct linux_zimage_header *)addr;
+
+	return image_header->end - image_header->start;
+}
+#else
+#error "No Linux image type provided!"
+#endif
+
+static int load_kernel_image(struct image_info *image)
+{
+	int ret;
+
+#if defined(CONFIG_DATAFLASH)
+	ret = load_dataflash(image);
+#elif defined(CONFIG_NANDFLASH)
+	ret = load_nandflash(image);
+#elif defined(CONFIG_SDCARD)
+	ret = load_sdcard(image);
+#endif
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
 int load_kernel(struct image_info *image)
 {
-	struct kernel_image_header *image_header;
-	unsigned int load_addr, image_size;
-	unsigned int magic_number;
-	unsigned int jump_addr = (unsigned int)image->dest;
+	unsigned char *addr = image->dest;
+	unsigned int entry_point;
 	unsigned int r2;
 	unsigned int mach_type;
 	int ret;
 
 	void (*kernel_entry)(int zero, int arch, unsigned int params);
 
-#ifdef CONFIG_DATAFLASH
-	ret = load_dataflash(image);
-#endif
-
-#ifdef CONFIG_NANDFLASH
-	ret = load_nandflash(image);
-#endif
-
-#ifdef CONFIG_SDCARD
-	ret = load_sdcard(image);
-#endif
-	if (ret != 0)
+	ret = load_kernel_image(image);
+	if (ret)
 		return ret;
 
 #ifdef CONFIG_SCLK
 	slowclk_switch_osc32();
 #endif
 
-	image_header = (struct kernel_image_header *)jump_addr;
-	magic_number = swap_uint32(image_header->magic);
-	dbg_log(1, "\n\rImage magic: %d is found\n\r", magic_number);
-	if (magic_number != KERNEL_IMAGE_MAGIC) {
-		dbg_log(1, "** Bad image magic number found: %d\n\r",
-						magic_number);
+#if defined(CONFIG_LINUX_UIMAGE)
+	ret = boot_uimage_setup(addr, &entry_point);
+#elif defined(CONFIG_LINUX_ZIMAGE)
+	ret = boot_zimage_setup(addr, &entry_point);
+#else
+#error "No Linux image type provided!"
+#endif
+	if (ret)
 		return -1;
-	}
 
-	if (image_header->comp_type != 0) {
-		dbg_log(1, "The comp type has not been supported\n\r");
-		return -1;
-	}
-
-	image_size = swap_uint32(image_header->size);
-	load_addr = swap_uint32(image_header->load);
-
-	kernel_entry = (void (*)(int, int, unsigned int))
-					swap_uint32(image_header->entry_point);
-
-	dbg_log(1, "Relocating kernel image, dest: %d, src: %d\n\r",
-		load_addr, jump_addr + sizeof(struct kernel_image_header));
-
-	memcpy((void *)load_addr, (void *)(jump_addr
-			+ sizeof(struct kernel_image_header)), image_size);
-
-	dbg_log(1, " ...... %d bytes data transferred\n\r", image_size);
+	kernel_entry = (void (*)(int, int, unsigned int))entry_point;
 
 	if (image->of) {
 		ret = setup_dt_blob((char *)image->of_dest);
@@ -326,10 +403,10 @@ int load_kernel(struct image_info *image)
 		setup_boot_params();
 
 		mach_type = MACH_TYPE;
-		r2 = (unsigned int)(OS_MEM_BANK + 0x100);
+		r2 = (unsigned int)(MEM_BANK + 0x100);
 	}
 
-	dbg_log(1, "\n\rStarting linux kernel ..., machid: %d\n\r\n\r",
+	dbg_info("\nStarting linux kernel ..., machid: %d\n\n",
 							mach_type);
 
 	kernel_entry(0, mach_type, r2);
